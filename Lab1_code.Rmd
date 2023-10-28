@@ -6,24 +6,174 @@ output: html_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = TRUE, warning=F, message=F)
 library(tidyverse)
 library(sf)
 ```
 
+# Questions
+
+# Question 1
+
+*Discuss the advantages and challenges associated with an open data science approach. Provide an example based on this week’s reading. (1-2 paragraphs)*
+
+**Response:** 
+
 ### Reading in the data
 
-```{r}
+```{r, warning=F, message=F}
 df_boulder <- st_read("Data/boulder_data_eas648/BoulderSocialMedia.shp")
 ```
+
+The plot below examines how the points from the dataset are spatially distributed. The `alpha` argument was set to `0.01` to visualize where most of the pictures are being taken.
 
 ```{r}
 ggplot() +
     geom_sf(data = df_boulder,
-    fill = NA, alpha = .01) +
+    fill = NA, alpha = .01, shape = 21) +
     theme_bw()
 ```
 
+### Investigating where the points are concentrated the most
 
+Below, we visualize where most of the pictures are being taken using a 2D density plot. We can see that most of the pictures taken are concentrated between $105.28^\circ W$ and $105.29^\circ W$ longitudinally, and between $39.99^\circ N$ and $40.00^\circ N$ latiduinally.
+
+```{r}
+
+# transform the crs of the dataframe
+df_boulder <- st_transform(df_boulder, crs = "+proj=longlat +ellps=WGS84 +datum=WGS84")
+
+# create dummy dataframe
+points_pic <- df_boulder
+
+# convert simple features to data frame
+points <- as.data.frame(points_pic) #convert to dataframe
+points$lon <- unlist(map(points_pic$geometry,1)) #adding lon column
+points$lat <- unlist(map(points_pic$geometry,2)) #adding lat column
+
+ggplot(points, aes(x = lon, y = lat)) +
+  geom_density2d_filled() +
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 10)) +
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 10))
+
+```
+
+I reclassifed the points that fall within this boundary as being "high density" (labeled as `high_dens`). The figure below visualizes this classifiation.
+
+```{r}
+points %>%
+  mutate(high_dens = 
+           ifelse(
+             (lon > -105.29 & lon < -105.28) & (lat > 39.99 & lat < 40.00),
+             1,
+             0
+           )) %>%
+  ggplot() +
+  geom_point(aes(x = lon, y = lat, color = as.character(high_dens)), alpha = .01, shape = 21) +
+  theme_bw()
+```
+
+I then chose to employ a gradient boosted classification tree model to identify which characteristics are most indicative of a picture being taken at a "high density" area of the park. I used all of the distance variables (e.g., distance to nearest climbing wall) and the elevation variable as predictors of an area being "high density" vs "not high density". The results of the model may elucidate why the "high density" area of the park has so many pictures being taken there, and what characteristics of the park may be making so many people take a picture in this area.
+
+```{r}
+# load in library for gradient boosted regression tree model
+library(gbm)
+
+# select variables of interst
+df_gbm <- points %>%
+  mutate(high_dens = 
+           ifelse(
+             (lon > -105.29 & lon < -105.28) & (lat > 39.99 & lat < 40.00),
+             1,
+             0
+           ))  %>%
+  select(high_dens, 4:12) %>% # our outcome and the distance variables
+  na.omit() %>% as_tibble()
+
+# run model
+set.seed(4234); boost_dens <- gbm(high_dens ~ ., 
+                          data = df_gbm, 
+                          distribution = 'bernoulli', # our outcome is 1 vs 0
+                          cv.folds = 5,
+                          shrinkage = 0.01,
+                          verbose = FALSE,
+                          n.trees = 1000, 
+                          interaction.depth = 5)
+
+summary(boost_dens, plotit = FALSE) %>%
+  as_tibble() %>%
+  mutate("Variable Importance" = paste0(round(rel.inf, 1), "%")) %>%
+  select(-2) %>%
+  DT::datatable()
+
+
+```
+
+The findings from the gradient boosted regression tree model suggest that a picture's distance from the prairie dog mounds and a picture's distance from hiking trails are the two most important indicators of a picture being taken in a "high density" area. Let's examine the individual relationships of each indicator with the outcome.
+
+```{r}
+
+# get variable names 
+variables_gbm <- df_gbm %>% select(-1) %>% colnames()
+
+# create variable name crosswalk
+var_crosswalk <- tibble(
+  variable = variables_gbm,
+  nice_var_name = c("Dist. climbing wall", "Dist. hiking trl", "Dist. nat. landmark",
+                    "Dist. walking trl", "Dist. biking trl", "Dist. prairie dog", 
+                    "Elevation", "Dist. lakes, river", "Dist. street")
+)
+
+# get order of variables by variable importance from the model
+factor_levels <- summary(boost_dens, plotit = FALSE) %>% as_tibble() %>% .$var
+
+# sort the variable crosswalk in order of most important to least important variable
+var_crosswalk <- var_crosswalk %>% mutate(variable = factor(variable, levels = factor_levels)) %>% arrange(variable)
+
+
+```
+
+```{r}
+
+# create function to extract odds ratios for each variable
+OR_gbm <- function(var) {
+  
+  boost_dens %>%
+  pdp::partial(plot=FALSE, n.trees = 1000, pred.var = var) %>% # calculate partial dependency
+  as_tibble() %>% # convert to tibble
+  mutate(variable = var) %>% # rename inputted column to "variable"
+  rename("value" = 1) %>% # rename the first column to "value"
+  mutate(yhat = 1/(1+exp(-yhat))) %>% # calculate probability
+  mutate(yhat = yhat/(1-yhat)) %>% # calculate odds
+  mutate(median = median(df_gbm[[var]])) %>% # find median value of variable
+  mutate(median_yhat = yhat[which.min(abs(value - median))]) %>% # find OR associated with median of variable
+  mutate(OR = yhat/median_yhat) %>% # calculate odds ratio relative to median odds
+  select(variable, value, OR) # select the variable name, value, and odds ratio
+  
+}
+
+# create single data frame of odds ratios for each variable
+OR_df <- NULL
+for(i in 1:length(variables_gbm)) {
+  temp_df <- OR_gbm(variables_gbm[i])
+  
+  OR_df <- rbind(OR_df, temp_df)
+}
+
+
+OR_df %>%
+  left_join(var_crosswalk, by = "variable") %>%
+  mutate(nice_var_name = factor(nice_var_name, levels = var_crosswalk$nice_var_name)) %>%
+  ggplot(aes(x = value, y = OR)) +
+  geom_smooth(se = FALSE) +
+  geom_hline(yintercept = 1, linetype = "dashed") +
+  facet_wrap(~nice_var_name, scales = "free_x") +
+  labs(x = "Distance (in ft.)", y = "Odds ratio", title = "Odds of a picture being taken in high density area of park") +
+  theme_bw()
+
+
+```
+
+The figure demonstrates that generally the closer people are to the prairie dog mounds and hiking trails, the more likely they are to take a picture. These two factors play the largest role in why people are taking a picture in the "high density" area of the park.
 
 
