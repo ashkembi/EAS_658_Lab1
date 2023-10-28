@@ -12,6 +12,8 @@ library(sf)
 library(ggspatial)
 ```
 
+All of the data and code used to generate this report can be found in my [github](https://github.com/ashkembi/EAS_658_Lab1).
+
 # Questions
 
 ## Question 1
@@ -192,4 +194,10 @@ OR_df %>%
 
 The figure demonstrates that generally the closer people are to the prairie dog mounds and hiking trails, the more likely they are to take a picture. These two factors play the largest role in why people are taking a picture in the "high density" area of the park. Being closer to a biking trail and to a natural landmark also had some association with the odds of taking a picture in the "high density" area, although the relationship did not appear as strong as the distance to prairie dog mounds and hiking trails. The other indicators did not appear to have a strong influence as to why people are more likely to take a picture in the "high density" area.
 
+## Bonus question
 
+*Bonus: Capture a screenshot of the history of your Git commits. Share your strategy for utilizing Git in your workflow.*
+
+Below is an image of my Git commit history. My strategy for utilizing Git into my workflow was rather simplistic for this project. I would save small changes to my code locally, but anytime I had completed a large change (such as finished a question or larger analysis), I would also push a Git commit to ensure that everything was being stored there as well.
+
+![History of Git commits](img/Git commit history.png)
