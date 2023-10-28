@@ -9,15 +9,22 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE, warning=F, message=F)
 library(tidyverse)
 library(sf)
+library(ggspatial)
 ```
 
 # Questions
 
-# Question 1
+## Question 1
 
 *Discuss the advantages and challenges associated with an open data science approach. Provide an example based on this week’s reading. (1-2 paragraphs)*
 
-**Response:** 
+**Response:** An open data science approach provides many new advantages that did not exist before. This approach primarily allows for one of the tenets of responsible research conduct, the *rigor and reproducability* component, to be strengthened by allowing others to examine results and regenerate the analyses if they were interested, given that open data science runs off of coding and making the code publicly available. Furthermore, it allows scientists and researchers to make their study outputs available to the general public such that another researcher may incorporate their datasets into their own study, allowing data from many sources to be integrated into a single study that may uncover hidden relationships that may have been previously difficult to observe without open sources of data.
+
+On the other hand, an open data science approach can provide more scrutiny on researchers and scientists' work than they may have previously faced, given all the coding and datasets used to derive their conclusions are made publicly available for all. Further, this open approach may result in users who are not familiar/ well-versed in a particular researcher's discipline to draw incorrect conclusions from the publicly available data, since the data would be available to all. This can have important implications for the spread of misinformation, which can be particularly problematic in situations related to public health (such as the CODID-19 pandemic). Lastly, this open data science approach lends to the ability to combine many large, disparate sources of data to obtain a lot of information, or "big data". As highlighted in the reading this week, a large risk with this approach has generated proponents of "ending scientific theory", as they believe that "correlation is enough" when you have such massive amounts of information. This may devalue the findings of "small data" studies, shift funding towards "big data" studies, and result in incorrect inferences being made from data; all of these scenarios have the potential to minimize the knowledge generated from research and decrease trust in the scientific process and its discoveries.
+
+## Question 2
+
+*Create a markdown document that showcases an analysis of this week’s data or any other dataset of your choice. Include descriptive text that explains your analysis, and incorporate figures and geovisualizations. Include 1 chart and 1 map. Structure and explain your analysis with text, headings, highlights, images and other markdown basics.*
 
 ### Reading in the data
 
@@ -27,18 +34,22 @@ df_boulder <- st_read("Data/boulder_data_eas648/BoulderSocialMedia.shp")
 
 The plot below examines how the points from the dataset are spatially distributed. The `alpha` argument was set to `0.01` to visualize where most of the pictures are being taken.
 
-```{r}
+```{r, fig.cap= "Fig 1. Map of where pictures are being taken in a park in Boulder, CO. The picture points were made less opaque to visualize where most picutures were being taken."}
 ggplot() +
+  annotation_scale(location = "bl", width_hint = 0.5) +
+    annotation_north_arrow(location = "tr", which_north = "true",
+        style = north_arrow_fancy_orienteering) +
     geom_sf(data = df_boulder,
     fill = NA, alpha = .01, shape = 21) +
+  labs(title = "Pictures taken in Boulder, Colorado park") +
     theme_bw()
 ```
 
 ### Investigating where the points are concentrated the most
 
-Below, we visualize where most of the pictures are being taken using a 2D density plot. We can see that most of the pictures taken are concentrated between $105.28^\circ W$ and $105.29^\circ W$ longitudinally, and between $39.99^\circ N$ and $40.00^\circ N$ latiduinally.
+Below, we visualize where most of the pictures are being taken using a 2D density plot. We can see that most of the pictures taken are concentrated between $105.28^\circ W$ and $105.29^\circ W$ longitudinally, and between $39.99^\circ N$ and $40.00^\circ N$ latitudinally.
 
-```{r}
+```{r, fig.cap="Fig 2. 2D density plot of the pictures being taken in a park in Boulder, CO."}
 
 # transform the crs of the dataframe
 df_boulder <- st_transform(df_boulder, crs = "+proj=longlat +ellps=WGS84 +datum=WGS84")
@@ -54,13 +65,14 @@ points$lat <- unlist(map(points_pic$geometry,2)) #adding lat column
 ggplot(points, aes(x = lon, y = lat)) +
   geom_density2d_filled() +
   scale_x_continuous(breaks = scales::pretty_breaks(n = 10)) +
-  scale_y_continuous(breaks = scales::pretty_breaks(n = 10))
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 10)) +
+  labs(x = "Longitude", y = "Latitude", fill = "Count")
 
 ```
 
 I reclassifed the points that fall within this boundary as being "high density" (labeled as `high_dens`). The figure below visualizes this classifiation.
 
-```{r}
+```{r, fig.cap="Fig 3. Visualizing the high density area of the park in Boulder, CO."}
 points %>%
   mutate(high_dens = 
            ifelse(
@@ -69,11 +81,14 @@ points %>%
              0
            )) %>%
   ggplot() +
-  geom_point(aes(x = lon, y = lat, color = as.character(high_dens)), alpha = .01, shape = 21) +
+  geom_point(aes(x = lon, y = lat, fill = as.character(high_dens)), alpha = .01, shape = 21) +
+  labs(x = "Longitude", y = "Latitude") +
+  scale_fill_manual(values = c("white", "#8b0000"), labels = c("No", "Yes"), name = "High Density Area") +
+  guides(fill = guide_legend(override.aes = list(alpha = 1))) +
   theme_bw()
 ```
 
-I then chose to employ a gradient boosted classification tree model to identify which characteristics are most indicative of a picture being taken at a "high density" area of the park. I used all of the distance variables (e.g., distance to nearest climbing wall) and the elevation variable as predictors of an area being "high density" vs "not high density". The results of the model may elucidate why the "high density" area of the park has so many pictures being taken there, and what characteristics of the park may be making so many people take a picture in this area.
+I then chose to employ a gradient boosted classification tree model to identify which characteristics are most indicative of a picture being taken at a "high density" area of the park. I used all of the distance variables (e.g., distance to nearest climbing wall) and the elevation variable as predictors of an area being "high density" vs "not high density". The results of the model may elucidate park-goer behaviors as to why the "high density" area of the park has so many pictures being taken there, and specifically which characteristics of the park in that area may be making so many people take a picture.
 
 ```{r}
 # load in library for gradient boosted regression tree model
@@ -103,6 +118,7 @@ set.seed(4234); boost_dens <- gbm(high_dens ~ .,
 summary(boost_dens, plotit = FALSE) %>%
   as_tibble() %>%
   mutate("Variable Importance" = paste0(round(rel.inf, 1), "%")) %>%
+  rename("Variable" = "var") %>%
   select(-2) %>%
   DT::datatable()
 
@@ -133,7 +149,7 @@ var_crosswalk <- var_crosswalk %>% mutate(variable = factor(variable, levels = f
 
 ```
 
-```{r}
+```{r, fig.cap="Fig 4. Relationship between each variable from the gradient boosted classification tree model and the odds of a picture being taken in a high density area. Each relationship was normalized to the median and the smoothed relationship is displayed. The null is represented by the dashed line at odds ratio of 1."}
 
 # create function to extract odds ratios for each variable
 OR_gbm <- function(var) {
@@ -174,6 +190,6 @@ OR_df %>%
 
 ```
 
-The figure demonstrates that generally the closer people are to the prairie dog mounds and hiking trails, the more likely they are to take a picture. These two factors play the largest role in why people are taking a picture in the "high density" area of the park.
+The figure demonstrates that generally the closer people are to the prairie dog mounds and hiking trails, the more likely they are to take a picture. These two factors play the largest role in why people are taking a picture in the "high density" area of the park. Being closer to a biking trail and to a natural landmark also had some association with the odds of taking a picture in the "high density" area, although the relationship did not appear as strong as the distance to prairie dog mounds and hiking trails. The other indicators did not appear to have a strong influence as to why people are more likely to take a picture in the "high density" area.
 
 
